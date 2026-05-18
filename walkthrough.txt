@@ -1,0 +1,205 @@
+===========================================================================
+  WALKTHROUGH: What actually happens step by step
+===========================================================================
+
+We have 3 terminals open. Let's follow exactly what happens.
+
+---------------------------------------------------------------------------
+TERMINAL 1 — Server starts
+---------------------------------------------------------------------------
+
+  $ ./server
+
+  socket()  → OS gives server_fd = 3  (just a number, like a file handle)
+  bind()    → "reserve port 4444 for me"
+  listen()  → "I am ready to receive connection requests"
+  accept()  → SERVER STOPS HERE. It is BLOCKED, doing nothing,
+               just waiting for someone to connect.
+
+  Output:
+    Socket created...
+    Binding done...
+    Waiting for connections...
+    [FROZEN — waiting]
+
+
+---------------------------------------------------------------------------
+TERMINAL 2 — Client 1 starts:  ./client 127.0.0.1
+---------------------------------------------------------------------------
+
+  socket()      → OS gives client1's sock_fd = 3
+  inet_addr()   → converts "127.0.0.1" to binary
+  htons(4444)   → converts port to network byte order
+  connect()     → Client sends a SYN packet to 127.0.0.1:4444
+
+  --- TCP THREE-WAY HANDSHAKE happens automatically ---
+    Client  →  SYN        →  Server
+    Client  ←  SYN-ACK    ←  Server
+    Client  →  ACK        →  Server
+  --- Connection is now established ---
+
+  Back on the SERVER:
+    accept() unblocks and returns client_fd = 4
+    (a brand new socket just for talking to Client 1)
+
+    printf → "New client connected!"
+
+    fork() is called. Two processes now exist:
+
+      CHILD 1 (pid=1001):
+        close(server_fd)   → child doesn't need listening socket
+        recv(client_fd)    → CHILD BLOCKS here, waiting for Client 1's message
+
+      PARENT:
+        close(client_fd)   → parent hands this off to the child, doesn't need it
+        loops back to accept() → PARENT BLOCKS again, waiting for next client
+
+  Back on Client 1:
+    connect() returns (handshake done)
+    printf → "Connected! Type messages:"
+    fgets() → CLIENT BLOCKS, waiting for you to type something
+
+
+  Current state:
+    Parent process   → blocked at accept()       [waiting for next client]
+    Child 1 process  → blocked at recv()         [waiting for Client 1's message]
+    Client 1         → blocked at fgets()        [waiting for you to type]
+
+
+---------------------------------------------------------------------------
+TERMINAL 2 — Client 1 types:  hi1  [Enter]
+---------------------------------------------------------------------------
+
+  fgets() reads "hi1\n" into buffer.
+
+  send(sock_fd, "hi1\n", ...)
+    → "hi1\n" travels through the TCP connection to the server
+
+  Client 1 then hits recv() → BLOCKS, waiting for server's reply.
+
+
+  On the SERVER — Child 1 process wakes up:
+    recv() unblocks, buffer = "hi1\n"
+    printf → "Received: hi1"
+
+    send(client_fd, "hi1\n", ...)
+      → "hi1\n" travels back to Client 1
+
+    Child 1 loops back to recv() → BLOCKS again for next message from Client 1.
+
+
+  Back on Client 1:
+    recv() unblocks, buffer = "hi1\n"
+    printf → "Echo: hi1"
+    fgets() → BLOCKS again, waiting for next input.
+
+  Output on Client 1 terminal:
+    Echo: hi1
+
+  Output on Server terminal:
+    Received: hi1
+    Echoed back: hi1
+
+
+  Current state:
+    Parent process   → still blocked at accept()
+    Child 1 process  → blocked at recv()         [waiting for Client 1 again]
+    Client 1         → blocked at fgets()        [waiting for you to type again]
+
+
+---------------------------------------------------------------------------
+TERMINAL 3 — Client 2 starts:  ./client 127.0.0.1
+---------------------------------------------------------------------------
+
+  Client 2 does socket() → connect() → TCP handshake with server.
+
+  On the SERVER — Parent process wakes up (it was blocked at accept()):
+    accept() returns client_fd = 5   (new socket, different from Client 1's)
+    printf → "New client connected!"
+
+    fork() is called again. A SECOND child is born:
+
+      CHILD 2 (pid=1002):
+        close(server_fd)
+        recv(client_fd=5)  → BLOCKS, waiting for Client 2's message
+
+      PARENT:
+        close(client_fd=5)
+        loops back to accept() → BLOCKS again for next client
+
+  Current state:
+    Parent process   → blocked at accept()       [ready for Client 3, 4, ...]
+    Child 1 process  → blocked at recv()         [waiting for Client 1]
+    Child 2 process  → blocked at recv()         [waiting for Client 2]
+    Client 1         → blocked at fgets()
+    Client 2         → blocked at fgets()
+
+
+---------------------------------------------------------------------------
+TERMINAL 3 — Client 2 types:  hi2  [Enter]
+---------------------------------------------------------------------------
+
+  Exact same flow as Client 1's message.
+  Child 2 wakes up, receives "hi2\n", echoes it back.
+  Child 1 is completely unaffected — it's a separate process.
+
+  Output on Client 2 terminal:
+    Echo: hi2
+
+  Output on Server terminal:
+    Received: hi2
+    Echoed back: hi2
+
+
+---------------------------------------------------------------------------
+VISUAL DIAGRAM — processes running at the same time
+---------------------------------------------------------------------------
+
+  After both clients are connected and have sent one message:
+
+  ┌─────────────────────────────────────────────────────────┐
+  │                      SERVER MACHINE                     │
+  │                                                         │
+  │  [Parent Process]                                       │
+  │   server_fd=3  →  listen() → accept() [BLOCKED]        │
+  │                                                         │
+  │  [Child 1 Process]  ←──────────────────────────────┐   │
+  │   client_fd=4  →  recv() [BLOCKED]                 │   │
+  │                                                     │   │
+  │  [Child 2 Process]  ←───────────────────────────┐  │   │
+  │   client_fd=5  →  recv() [BLOCKED]              │  │   │
+  │                                                  │  │   │
+  └──────────────────────────────────────────────────┼──┼───┘
+                                                     │  │
+                              TCP connection 1 ──────┘  │
+                              TCP connection 2 ─────────┘
+                                                     │  │
+  ┌──────────────────┐              ┌────────────────┴──┴──┐
+  │    CLIENT 1      │              │       CLIENT 2        │
+  │  fgets [BLOCKED] │              │   fgets [BLOCKED]     │
+  └──────────────────┘              └───────────────────────┘
+
+
+---------------------------------------------------------------------------
+KEY THINGS TO REMEMBER FOR EXAM
+---------------------------------------------------------------------------
+
+  1. accept() creates a BRAND NEW socket for each client.
+     server_fd keeps listening. client_fd is the private line.
+
+  2. fork() splits the process into two identical copies.
+     The ONLY difference is what fork() returns:
+       0   → you are the child  → handle this client
+       >0  → you are the parent → go back to accept()
+
+  3. Each child handles EXACTLY ONE client in its own recv/send loop.
+     Children run in PARALLEL — they don't affect each other.
+
+  4. BLOCKED means the function is paused, doing nothing,
+     using almost zero CPU, until data arrives.
+
+  5. Flow for each message:
+       Client types → send() → [network] → recv() in child
+       child send() → [network] → recv() in client → client prints echo
+
+===========================================================================
