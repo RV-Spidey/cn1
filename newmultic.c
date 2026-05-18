@@ -5,7 +5,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#define PORT 4444
+#define PORT 4445
 #define BUF 1024
 
 int main(int argc, char *argv[]) {

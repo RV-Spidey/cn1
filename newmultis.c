@@ -6,7 +6,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
-#define PORT 4444
+#define PORT 4445
 #define BUF 1024
 
 int main() {
@@ -14,6 +14,7 @@ int main() {
     struct sockaddr_in server, client;
     char buffer[BUF];
     int len;
+    pid_t childpid;
 
     // 1. Create socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -38,7 +39,8 @@ int main() {
         printf("New client connected!\n");
 
         // 6. Fork: create child process to handle THIS client
-        if (fork() == 0) {
+        childpid=fork();
+        if (childpid == 0) {
             // --- CHILD PROCESS ---
             close(server_fd);  // child doesn't need the listening socket
 
