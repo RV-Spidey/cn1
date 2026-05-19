@@ -36,7 +36,9 @@ int main() {
 
         // 5. Accept a new client
         client_fd = accept(server_fd, (struct sockaddr*)&client, &len);
-        printf("New client connected!\n");
+       printf("New client connected: %s:%d\n",
+       inet_ntoa(client.sin_addr),
+       ntohs(client.sin_port));
 
         // 6. Fork: create child process to handle THIS client
         childpid=fork();
